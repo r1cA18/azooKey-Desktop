@@ -9,6 +9,9 @@ extension azooKeyMacInputController {
         self.appMenu.autoenablesItems = true
         self.liveConversionToggleMenuItem = NSMenuItem(title: "ライブ変換", action: #selector(self.toggleLiveConversion(_:)), keyEquivalent: "")
         self.appMenu.addItem(self.liveConversionToggleMenuItem)
+        self.llmDraftMenuItem = NSMenuItem(title: "LLM Draft Mode", action: #selector(self.toggleLLMDraftMode(_:)), keyEquivalent: "")
+        self.llmDraftMenuItem.state = Config.LLMDraftMode().value ? .on : .off
+        self.appMenu.addItem(self.llmDraftMenuItem)
         self.transformSelectedTextMenuItem = NSMenuItem(title: TransformMenuTitle.normal, action: #selector(self.performTransformSelectedText(_:)), keyEquivalent: "s")
         self.transformSelectedTextMenuItem.keyEquivalentModifierMask = [.control]
         self.transformSelectedTextMenuItem.target = self
@@ -29,6 +32,16 @@ extension azooKeyMacInputController {
     func updateLiveConversionToggleMenuItem(newValue: Bool) {
         self.liveConversionToggleMenuItem.state = newValue ? .on : .off
         self.liveConversionToggleMenuItem.title = "ライブ変換"
+    }
+
+    @MainActor @objc func toggleLLMDraftMode(_ sender: Any) {
+        let config = Config.LLMDraftMode()
+        config.value = !config.value
+        self.llmDraftMenuItem.state = config.value ? .on : .off
+        if !config.value {
+            self.resetLLMDraftBuffer()
+        }
+        self.segmentsManager.appendDebugMessage("toggleLLMDraftMode: \(config.value)")
     }
 
     private enum TransformMenuTitle {

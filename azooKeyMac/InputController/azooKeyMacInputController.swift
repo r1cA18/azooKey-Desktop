@@ -39,6 +39,13 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
     // ピン留めプロンプトのキャッシュ（パフォーマンス向上のため）
     private var pinnedPromptsCache: [PromptHistoryItem] = []
 
+    // MARK: - LLM Draft Mode
+    var llmDraftMenuItem: NSMenuItem = NSMenuItem()
+    /// 未変換ひらがなのまま確定されたテキストの累積長（UTF-16長）。変換済み確定で 0 にリセット。
+    var llmDraftPlainHiraganaLength: Int = 0
+    /// 段落変換中フラグ（多重起動防止）
+    var isLLMDraftConverting: Bool = false
+
     private static func makeCandidateWindow(contentViewController: NSViewController) -> NSWindow {
         let window = NSWindow(contentViewController: contentViewController)
         window.styleMask = [.borderless]
@@ -179,6 +186,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
 
     @MainActor
     override func deactivateServer(_ sender: Any!) {
+        self.resetLLMDraftBuffer()
         self.segmentsManager.deactivate()
         self.candidatesWindow.orderOut(nil)
         self.predictionWindow.orderOut(nil)
@@ -201,6 +209,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         let text = self.segmentsManager.commitMarkedText(inputState: self.inputState)
         if let client = sender as? IMKTextInput {
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+            self.recordLLMDraftCommittedText(text)
         }
         self.inputState = .none
         self.refreshMarkedText()
@@ -355,6 +364,13 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
             }
         }
 
+        // LLM Draft Mode: モードON かつ 日本語入力のときは専用ハンドラに横取りさせる。
+        // 専用ハンドラが処理しない userAction は nil を返し、通常処理にフォールスルーする。
+        if Config.LLMDraftMode().value, self.inputLanguage == .japanese,
+           let consumed = self.handleLLMDraftMode(userAction: userAction, event: event, client: client) {
+            return consumed
+        }
+
         let (clientAction, clientActionCallback) = inputState.event(
             eventCore: event.keyEventCore,
             userAction: userAction,
@@ -415,15 +431,18 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         case .commitMarkedText:
             let text = self.segmentsManager.commitMarkedText(inputState: self.inputState)
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+            self.recordLLMDraftCommittedText(text)
         case .commitMarkedTextAndAppendToMarkedText(let string):
             let text = self.segmentsManager.commitMarkedText(inputState: self.inputState)
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+            self.recordLLMDraftCommittedText(text)
             // 英語モードの場合は.directでローマ字変換せずそのまま入力
             let inputStyle: InputStyle = self.inputLanguage == .english ? .direct : self.inputStyle
             self.segmentsManager.insertAtCursorPosition(string, inputStyle: inputStyle)
         case .commitMarkedTextAndAppendPieceToMarkedText(let pieces):
             let text = self.segmentsManager.commitMarkedText(inputState: self.inputState)
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+            self.recordLLMDraftCommittedText(text)
             // 英語モードの場合は.directでローマ字変換せずそのまま入力
             let inputStyle: InputStyle = self.inputLanguage == .english ? .direct : self.inputStyle
             self.segmentsManager.insertAtCursorPosition(pieces: pieces, inputStyle: inputStyle)
@@ -558,6 +577,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
     }
 
     @MainActor func switchInputLanguage(_ language: InputLanguage, client: IMKTextInput) {
+        self.resetLLMDraftBuffer()
         self.inputLanguage = language
         client.overrideKeyboard(withKeyboardNamed: Config.KeyboardLayout().value.layoutIdentifier)
         switch language {
@@ -798,6 +818,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
             client.insertText(candidate.text, replacementRange: NSRange(location: NSNotFound, length: 0))
             // アプリケーションサポートのディレクトリを準備しておく
             self.segmentsManager.prefixCandidateCommited(candidate, leftSideContext: cleanLeftSideContext ?? "")
+            self.recordLLMDraftCommittedText(candidate.text)
         }
     }
 
