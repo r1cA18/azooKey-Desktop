@@ -151,6 +151,28 @@
 		};
 /* End PBXGroup section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		55DEB000000000000000DEB0 /* Rename Debug input source */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Rename Debug input source";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"${CONFIGURATION}\" != \"Debug\" ]; then exit 0; fi\nSTRINGS=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/en.lproj/InfoPlist.strings\"\n[ -f \"${STRINGS}\" ] || exit 0\nTMP=\"${STRINGS}.utf8.tmp\"\niconv -f UTF-16 -t UTF-8 \"${STRINGS}\" > \"${TMP}\" || exit 0\n/usr/bin/sed -i '' -e 's/(English)/(Debug English)/' -e 's/(日本語)/(Debug 日本語)/' \"${TMP}\"\niconv -f UTF-8 -t UTF-16 \"${TMP}\" > \"${STRINGS}\"\nrm -f \"${TMP}\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXNativeTarget section */
 		1A41E61326E745D9009B65D7 /* azooKeyMac */ = {
 			isa = PBXNativeTarget;
@@ -159,6 +181,7 @@
 				1A41E61026E745D9009B65D7 /* Sources */,
 				1A41E61126E745D9009B65D7 /* Frameworks */,
 				1A41E61226E745D9009B65D7 /* Resources */,
+				55DEB000000000000000DEB0 /* Rename Debug input source */,
 			);
 			buildRules = (
 			);
@@ -503,7 +526,7 @@
 				LLVM_LTO = YES;
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.ensan.inputmethod.azooKeyMac;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.ensan.inputmethod.azooKeyMac.debug;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_INTEROP_MODE = objcxx;
