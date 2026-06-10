@@ -9,7 +9,7 @@ extension azooKeyMacInputController {
         self.appMenu.autoenablesItems = true
         self.liveConversionToggleMenuItem = NSMenuItem(title: "ライブ変換", action: #selector(self.toggleLiveConversion(_:)), keyEquivalent: "")
         self.appMenu.addItem(self.liveConversionToggleMenuItem)
-        self.llmDraftMenuItem = NSMenuItem(title: "LLM Draft Mode", action: #selector(self.toggleLLMDraftMode(_:)), keyEquivalent: "")
+        self.llmDraftMenuItem = NSMenuItem(title: "ローマ字AI変換", action: #selector(self.toggleLLMDraftMode(_:)), keyEquivalent: "")
         self.llmDraftMenuItem.state = Config.LLMDraftMode().value ? .on : .off
         self.appMenu.addItem(self.llmDraftMenuItem)
         self.transformSelectedTextMenuItem = NSMenuItem(title: TransformMenuTitle.normal, action: #selector(self.performTransformSelectedText(_:)), keyEquivalent: "s")
@@ -22,11 +22,9 @@ extension azooKeyMacInputController {
         self.updateTransformSelectedTextMenuItemEnabledState()
     }
 
-    @objc func toggleLiveConversion(_ sender: Any) {
+    @MainActor @objc func toggleLiveConversion(_ sender: Any) {
         self.segmentsManager.appendDebugMessage("\(#line): toggleLiveConversion")
-        let config = Config.LiveConversion()
-        config.value = !self.liveConversionEnabled
-        self.updateLiveConversionToggleMenuItem(newValue: config.value)
+        self.setLiveConversion(!self.liveConversionEnabled)
     }
 
     func updateLiveConversionToggleMenuItem(newValue: Bool) {
@@ -35,13 +33,31 @@ extension azooKeyMacInputController {
     }
 
     @MainActor @objc func toggleLLMDraftMode(_ sender: Any) {
-        let config = Config.LLMDraftMode()
-        config.value = !config.value
-        self.llmDraftMenuItem.state = config.value ? .on : .off
-        if !config.value {
+        self.setRomajiAIMode(!Config.LLMDraftMode().value)
+        self.segmentsManager.appendDebugMessage("toggleLLMDraftMode: \(Config.LLMDraftMode().value)")
+    }
+
+    /// ライブ変換の有効/無効を設定する。独立モードのため、ONにするとローマ字AI変換はOFFになる。
+    @MainActor func setLiveConversion(_ enabled: Bool) {
+        Config.LiveConversion().value = enabled
+        self.updateLiveConversionToggleMenuItem(newValue: enabled)
+        if enabled {
+            Config.LLMDraftMode().value = false
+            self.llmDraftMenuItem.state = .off
             self.resetLLMDraftBuffer()
         }
-        self.segmentsManager.appendDebugMessage("toggleLLMDraftMode: \(config.value)")
+    }
+
+    /// ローマ字AI変換モードの有効/無効を設定する。独立モードのため、ONにするとライブ変換はOFFになる。
+    @MainActor func setRomajiAIMode(_ enabled: Bool) {
+        Config.LLMDraftMode().value = enabled
+        self.llmDraftMenuItem.state = enabled ? .on : .off
+        if enabled {
+            Config.LiveConversion().value = false
+            self.updateLiveConversionToggleMenuItem(newValue: false)
+        } else {
+            self.resetLLMDraftBuffer()
+        }
     }
 
     private enum TransformMenuTitle {

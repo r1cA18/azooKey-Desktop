@@ -5,10 +5,10 @@ import InputMethodKit
 
 // MARK: - LLM Draft Mode
 //
-// 基本動作は通常のazooKey（Zenzaiライブ変換・スペース変換そのまま）。
-// それに加えて、「ひらがなのまま確定されたテキスト」の累積長を追跡しておき、
-// 空行(未確定なしのEnter)が来たら、その未変換ひらがな段落を同期的にLLM(OpenAI API)で
-// 漢字かな交じり文へ変換する。
+// ライブ変換と排他の独立モード。モードON時はライブ変換がOFFになり、確定テキストは
+// 素のひらがなのまま溜まる。「ひらがなのまま確定されたテキスト」の累積長を追跡しておき、
+// 専用ショートカット（Config.RomajiAIConvertShortcut、既定 ⌃⌥J）が押されたら、その未変換
+// ひらがな段落を同期的にLLM(OpenAI API / Foundation Models)で漢字かな交じり文へ変換する。
 //
 // 漢字・カタカナに変換確定された場合は累積長を 0 に戻すため、スペースでZenzai変換した
 // 部分は自動的にLLM変換の対象外になる（共存）。
@@ -28,31 +28,6 @@ extension azooKeyMacInputController {
     enum LLMDraftError: Error {
         case backendOff
         case noAPIKey
-    }
-
-    /// LLM Draft Mode のキー処理。Enterの空行だけを横取りし、それ以外は nil を返して
-    /// azooKey標準の入力処理にすべて委ねる（基本動作は通常のazooKeyのまま）。
-    @MainActor
-    func handleLLMDraftMode(userAction: UserAction, event: NSEvent, client: IMKTextInput) -> Bool? {
-        guard case .enter = userAction else {
-            return nil
-        }
-        if event.modifierFlags.contains(.command)
-            || event.modifierFlags.contains(.control)
-            || event.modifierFlags.contains(.option) {
-            return nil
-        }
-        // 未確定テキストがある（composing中）なら、azooKey標準のEnter確定に委ねる
-        guard self.segmentsManager.isEmpty else {
-            return nil
-        }
-        // 未変換ひらがなが溜まっていなければ通常の改行に委ねる
-        guard self.llmDraftPlainHiraganaLength > 0 else {
-            return nil
-        }
-        // 変換を開始できたときだけEnterを消費する。開始できなければ通常の改行に委ねる
-        // （変換中・範囲検証失敗などでユーザーのEnterを握りつぶさない）。
-        return self.startLLMDraftConversion(client: client) ? true : nil
     }
 
     /// azooKeyの確定経路からフックされる。確定テキストが「未変換ひらがな」なら累積長に加算し、
@@ -106,7 +81,7 @@ extension azooKeyMacInputController {
     /// 溜まった未変換ひらがな段落の変換を開始する。開始できたら true を返す。
     /// 範囲は「現在のカーソル位置から累積長ぶん遡る」で求め、実テキストを再検証する。
     @MainActor
-    private func startLLMDraftConversion(client: IMKTextInput) -> Bool {
+    func startLLMDraftConversion(client: IMKTextInput) -> Bool {
         guard !self.isLLMDraftConverting else {
             return false
         }

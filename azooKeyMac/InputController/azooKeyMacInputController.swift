@@ -163,6 +163,8 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         // Register custom input table (if available) for `.tableName` usage
         CustomInputTableStore.registerIfExists()
         self.updateLiveConversionToggleMenuItem(newValue: self.liveConversionEnabled)
+        // 設定画面など controller 外からの変更にメニューのチェックを追従させる（独立モードの同期）
+        self.llmDraftMenuItem.state = Config.LLMDraftMode().value ? .on : .off
         self.updateTransformSelectedTextMenuItemEnabledState()
         // ピン留めプロンプトのキャッシュを更新
         self.reloadPinnedPromptsCache()
@@ -364,11 +366,34 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
             }
         }
 
-        // LLM Draft Mode: モードON かつ 日本語入力のときは専用ハンドラに横取りさせる。
-        // 専用ハンドラが処理しない userAction は nil を返し、通常処理にフォールスルーする。
-        if Config.LLMDraftMode().value, self.inputLanguage == .japanese,
-           let consumed = self.handleLLMDraftMode(userAction: userAction, event: event, client: client) {
-            return consumed
+        // ローマ字AI変換: 専用ショートカットで「モード切替」と「段落のLLM変換」を処理する。
+        // レコーダー（KeyboardShortcutRecorder）と同じ key/modifiers の取り方で照合する。
+        do {
+            let shortcutKey = event.charactersIgnoringModifiers?.lowercased() ?? ""
+            let shortcutModifiers = KeyEventCore.ModifierFlag(from: event.modifierFlags)
+            func matchesShortcut(_ shortcut: KeyboardShortcut) -> Bool {
+                !shortcutKey.isEmpty && shortcut.key == shortcutKey && shortcut.modifiers == shortcutModifiers
+            }
+            // ライブ変換 ⇄ ローマ字AI変換 の切り替え（独立モードのため相互排他）。
+            // 未確定テキストがある間は切り替えず、キーだけ消費する（マークドテキストを宙に浮かせない）。
+            if matchesShortcut(Config.SwitchInputAssistModeShortcut().value) {
+                if self.segmentsManager.isEmpty {
+                    if Config.LLMDraftMode().value {
+                        self.setLiveConversion(true)
+                    } else {
+                        self.setRomajiAIMode(true)
+                    }
+                }
+                return true
+            }
+            // ローマ字AI変換の実行（モードON・日本語入力・未確定なしのとき）。キーは常に消費する。
+            if Config.LLMDraftMode().value, self.inputLanguage == .japanese,
+               matchesShortcut(Config.RomajiAIConvertShortcut().value) {
+                if self.segmentsManager.isEmpty {
+                    _ = self.startLLMDraftConversion(client: client)
+                }
+                return true
+            }
         }
 
         let (clientAction, clientActionCallback) = inputState.event(
