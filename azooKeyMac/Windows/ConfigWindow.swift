@@ -23,6 +23,29 @@ struct ConfigWindow: View {
     @ConfigState private var systemUserDictionary = Config.SystemUserDictionary()
     @ConfigState private var keyboardLayout = Config.KeyboardLayout()
     @ConfigState private var aiBackend = Config.AIBackendPreference()
+    @ConfigState private var llmDraftMode = Config.LLMDraftMode()
+    @ConfigState private var romajiAIConvertShortcut = Config.RomajiAIConvertShortcut()
+    @ConfigState private var switchInputAssistModeShortcut = Config.SwitchInputAssistModeShortcut()
+
+    // ライブ変換とローマ字AI変換は独立モードとして相互排他にする。
+    private var liveConversionBinding: Binding<Bool> {
+        Binding(
+            get: { self.liveConversion.value },
+            set: { newValue in
+                self.liveConversion.value = newValue
+                if newValue { self.llmDraftMode.value = false }
+            }
+        )
+    }
+    private var llmDraftModeBinding: Binding<Bool> {
+        Binding(
+            get: { self.llmDraftMode.value },
+            set: { newValue in
+                self.llmDraftMode.value = newValue
+                if newValue { self.liveConversion.value = false }
+            }
+        )
+    }
 
     @State private var selectedTab: Tab = .basic
     @State private var zenzaiProfileHelpPopover = false
@@ -455,7 +478,7 @@ struct ConfigWindow: View {
             }
 
             Section {
-                Toggle("ライブ変換を有効化", isOn: $liveConversion)
+                Toggle("ライブ変換を有効化", isOn: liveConversionBinding)
                 HStack {
                     TextField("変換プロフィール", text: $zenzaiProfile, prompt: Text("例：田中太郎/高校生"))
                     helpButton(
@@ -469,6 +492,26 @@ struct ConfigWindow: View {
                 }
             } header: {
                 Label("変換設定", systemImage: "brain")
+            }
+
+            Section {
+                Toggle("ローマ字AI変換を有効化", isOn: llmDraftModeBinding)
+                HStack {
+                    Text("変換を実行")
+                    Spacer()
+                    KeyboardShortcutRecorder(shortcut: $romajiAIConvertShortcut)
+                        .frame(width: 120, height: 24)
+                }
+                HStack {
+                    Text("ライブ変換と切り替え")
+                    Spacer()
+                    KeyboardShortcutRecorder(shortcut: $switchInputAssistModeShortcut)
+                        .frame(width: 120, height: 24)
+                }
+            } header: {
+                Label("ローマ字AI変換", systemImage: "keyboard")
+            } footer: {
+                Text("ローマ字でひらがなを打ち溜め、ショートカットで段落をまとめてAI変換します。ライブ変換とは排他です（独立モード）。")
             }
         }
         .formStyle(.grouped)

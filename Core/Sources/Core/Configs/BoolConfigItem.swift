@@ -68,4 +68,10 @@ extension Config {
         static let `default` = true
         public static let key: String = "dev.ensan.inputmethod.azooKeyMac.preference.includeContextInAITransform"
     }
+    /// LLM Draft Mode（ローマ字→ひらがな溜め書き→空行で段落をLLM変換）を有効化する設定
+    public struct LLMDraftMode: BoolConfigItem {
+        public init() {}
+        static let `default` = false
+        public static let key: String = "dev.ensan.inputmethod.azooKeyMac.preference.enableLLMDraftMode"
+    }
 }

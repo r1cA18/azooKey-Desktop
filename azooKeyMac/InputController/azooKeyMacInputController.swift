@@ -39,6 +39,13 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
     // ピン留めプロンプトのキャッシュ（パフォーマンス向上のため）
     private var pinnedPromptsCache: [PromptHistoryItem] = []
 
+    // MARK: - LLM Draft Mode
+    var llmDraftMenuItem: NSMenuItem = NSMenuItem()
+    /// 未変換ひらがなのまま確定されたテキストの累積長（UTF-16長）。変換済み確定で 0 にリセット。
+    var llmDraftPlainHiraganaLength: Int = 0
+    /// 段落変換中フラグ（多重起動防止）
+    var isLLMDraftConverting: Bool = false
+
     private static func makeCandidateWindow(contentViewController: NSViewController) -> NSWindow {
         let window = NSWindow(contentViewController: contentViewController)
         window.styleMask = [.borderless]
@@ -156,6 +163,8 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         // Register custom input table (if available) for `.tableName` usage
         CustomInputTableStore.registerIfExists()
         self.updateLiveConversionToggleMenuItem(newValue: self.liveConversionEnabled)
+        // 設定画面など controller 外からの変更にメニューのチェックを追従させる（独立モードの同期）
+        self.llmDraftMenuItem.state = Config.LLMDraftMode().value ? .on : .off
         self.updateTransformSelectedTextMenuItemEnabledState()
         // ピン留めプロンプトのキャッシュを更新
         self.reloadPinnedPromptsCache()
@@ -179,6 +188,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
 
     @MainActor
     override func deactivateServer(_ sender: Any!) {
+        self.resetLLMDraftBuffer()
         self.segmentsManager.deactivate()
         self.candidatesWindow.orderOut(nil)
         self.predictionWindow.orderOut(nil)
@@ -201,6 +211,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         let text = self.segmentsManager.commitMarkedText(inputState: self.inputState)
         if let client = sender as? IMKTextInput {
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+            self.recordLLMDraftCommittedText(text)
         }
         self.inputState = .none
         self.refreshMarkedText()
@@ -355,6 +366,36 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
             }
         }
 
+        // ローマ字AI変換: 専用ショートカットで「モード切替」と「段落のLLM変換」を処理する。
+        // レコーダー（KeyboardShortcutRecorder）と同じ key/modifiers の取り方で照合する。
+        do {
+            let shortcutKey = event.charactersIgnoringModifiers?.lowercased() ?? ""
+            let shortcutModifiers = KeyEventCore.ModifierFlag(from: event.modifierFlags)
+            func matchesShortcut(_ shortcut: KeyboardShortcut) -> Bool {
+                !shortcutKey.isEmpty && shortcut.key == shortcutKey && shortcut.modifiers == shortcutModifiers
+            }
+            // ライブ変換 ⇄ ローマ字AI変換 の切り替え（独立モードのため相互排他）。
+            // 未確定テキストがある間は切り替えず、キーだけ消費する（マークドテキストを宙に浮かせない）。
+            if matchesShortcut(Config.SwitchInputAssistModeShortcut().value) {
+                if self.segmentsManager.isEmpty {
+                    if Config.LLMDraftMode().value {
+                        self.setLiveConversion(true)
+                    } else {
+                        self.setRomajiAIMode(true)
+                    }
+                }
+                return true
+            }
+            // ローマ字AI変換の実行（モードON・日本語入力・未確定なしのとき）。キーは常に消費する。
+            if Config.LLMDraftMode().value, self.inputLanguage == .japanese,
+               matchesShortcut(Config.RomajiAIConvertShortcut().value) {
+                if self.segmentsManager.isEmpty {
+                    _ = self.startLLMDraftConversion(client: client)
+                }
+                return true
+            }
+        }
+
         let (clientAction, clientActionCallback) = inputState.event(
             eventCore: event.keyEventCore,
             userAction: userAction,
@@ -415,15 +456,18 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
         case .commitMarkedText:
             let text = self.segmentsManager.commitMarkedText(inputState: self.inputState)
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+            self.recordLLMDraftCommittedText(text)
         case .commitMarkedTextAndAppendToMarkedText(let string):
             let text = self.segmentsManager.commitMarkedText(inputState: self.inputState)
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+            self.recordLLMDraftCommittedText(text)
             // 英語モードの場合は.directでローマ字変換せずそのまま入力
             let inputStyle: InputStyle = self.inputLanguage == .english ? .direct : self.inputStyle
             self.segmentsManager.insertAtCursorPosition(string, inputStyle: inputStyle)
         case .commitMarkedTextAndAppendPieceToMarkedText(let pieces):
             let text = self.segmentsManager.commitMarkedText(inputState: self.inputState)
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+            self.recordLLMDraftCommittedText(text)
             // 英語モードの場合は.directでローマ字変換せずそのまま入力
             let inputStyle: InputStyle = self.inputLanguage == .english ? .direct : self.inputStyle
             self.segmentsManager.insertAtCursorPosition(pieces: pieces, inputStyle: inputStyle)
@@ -558,6 +602,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
     }
 
     @MainActor func switchInputLanguage(_ language: InputLanguage, client: IMKTextInput) {
+        self.resetLLMDraftBuffer()
         self.inputLanguage = language
         client.overrideKeyboard(withKeyboardNamed: Config.KeyboardLayout().value.layoutIdentifier)
         switch language {
@@ -798,6 +843,7 @@ class azooKeyMacInputController: IMKInputController, NSMenuItemValidation { // s
             client.insertText(candidate.text, replacementRange: NSRange(location: NSNotFound, length: 0))
             // アプリケーションサポートのディレクトリを準備しておく
             self.segmentsManager.prefixCandidateCommited(candidate, leftSideContext: cleanLeftSideContext ?? "")
+            self.recordLLMDraftCommittedText(candidate.text)
         }
     }
 
